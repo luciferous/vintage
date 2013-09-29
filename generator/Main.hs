@@ -9,7 +9,7 @@ import Syntax (thrift)
 import Generator (generate)
 
 usage :: String
-usage = "Usage: hsift <file>"
+usage = "Usage: vintage <file>"
 
 compile :: FilePath -> IO ()
 compile file = do
