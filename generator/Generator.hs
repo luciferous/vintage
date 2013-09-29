@@ -177,7 +177,7 @@ generate (Document heads defs) =
              []
              (concatMap gen defs)
   where
-    ns      = intercalate "." (maybeToList nsDef ++ ["Types"])
+    ns      = intercalate "." (maybeToList nsDef ++ ["GenTypes"])
     nsDef   = fmap (\(Namespace _ n) -> n) (find isNs heads)
       where isNs (Namespace "hs" _) = True
             isNs _ = False
