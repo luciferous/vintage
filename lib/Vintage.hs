@@ -1,6 +1,7 @@
 module Vintage(
     send
   , runClient
+  , runServer
   , Session
   , Request
   , Response
