@@ -1,11 +1,11 @@
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Generator where
 
 import Prelude hiding (const, mod)
 
-import Data.Char (isLower)
+import Data.Char (isLower, toUpper)
 import Data.Maybe (maybeToList)
 import Language.Haskell.Exts.Pretty (prettyPrint)
 import Language.Haskell.Exts.SrcLoc (noLoc)
@@ -16,10 +16,30 @@ import Types
 typeDecl :: Identifier -> DefinitionType -> S.Decl
 typeDecl ident d = S.TypeDecl noLoc (S.Ident ident) [] (toType d)
 
-recDecl :: Identifier -> [Field] -> S.Decl
-recDecl ident fields = dataDeclHelper ident deriv [qualConDecl]
+dataDeclHelper :: Identifier -> [Identifier] -> [S.QualConDecl] -> S.Decl
+dataDeclHelper ident deriv qcds = S.DataDecl noLoc
+                                       S.DataType
+                                       context
+                                       (S.Ident ident)
+                                       tyVarBind
+                                       qcds
+                                       (map mkDeriv deriv)
   where
-    deriv       = []
+    context   = []
+    tyVarBind = []
+    mkDeriv d = (S.UnQual . S.Ident $ d, [])
+
+enumDecl :: Identifier -> [Identifier] -> [(Identifier, Maybe Integer)] -> S.Decl
+enumDecl ident deriv = dataDeclHelper ident ("Enum":deriv) . map (qualConDecl . fst)
+  where
+    qualConDecl = (S.QualConDecl noLoc tyVarBind context) . conDecl
+      where tyVarBind = []
+            context   = []
+            conDecl   = (`S.ConDecl` []) . S.Ident
+
+recDecl :: Identifier -> [Field] -> [Identifier] -> S.Decl
+recDecl ident fields deriv = dataDeclHelper ident deriv [qualConDecl]
+  where
     qualConDecl = S.QualConDecl noLoc
                                 tyVarBind'
                                 context'
@@ -31,6 +51,17 @@ recDecl ident fields = dataDeclHelper ident deriv [qualConDecl]
         mkField Field{..} = ( [S.Ident ("_" ++ _fieldName)]
                             , S.UnBangedTy (toType _fieldType)
                             )
+
+dataDecl :: Identifier -> [FieldType] -> [Identifier] -> S.Decl
+dataDecl ident ftypes deriv = dataDeclHelper ident deriv [qualConDecl]
+  where qualConDecl = S.QualConDecl noLoc
+                                    tyVarBind
+                                    context
+                                    conDecl
+        tyVarBind   = []
+        context     = []
+        conDecl     = S.ConDecl (S.Ident ident) types
+        types       = map (S.UnBangedTy . toType) ftypes
 
 mapType :: String -> FieldType -> FieldType -> S.Type
 mapType m k v = S.TyApp (S.TyApp (toType m) (toType k)) (toType v)
@@ -111,53 +142,51 @@ classDecl ident p fs = S.ClassDecl noLoc
                         in typeSig _fnName (foldr1 S.TyFun types)
       where getType Field{..} = toType _fieldType
 
-dataDeclHelper :: Identifier -> [S.Deriving] -> [S.QualConDecl] -> S.Decl
-dataDeclHelper ident deriv qcds = S.DataDecl noLoc
-                                       S.DataType
-                                       context
-                                       (S.Ident ident)
-                                       tyVarBind
-                                       qcds
-                                       deriv
-  where
-    context   = []
-    tyVarBind = []
-
-enumDecl :: Identifier -> [(Identifier, Maybe Integer)] -> S.Decl
-enumDecl ident = dataDeclHelper ident [deriv] . map (qualConDecl . fst)
-  where
-    deriv       = (S.UnQual . S.Ident $ "Enum", [])
-    qualConDecl = (S.QualConDecl noLoc tyVarBind context) . conDecl
-      where tyVarBind = []
-            context   = []
-            conDecl   = (`S.ConDecl` []) . S.Ident
-
 class Generator a where
     gen :: a -> [S.Decl]
 
 instance Generator Definition where
     gen (Typedef t ident) = [typeDecl ident t]
-    gen (Struct ident fields) = [recDecl ident fields]
     gen (Const t ident val) = [typeSig ident (toType t), patBind ident val]
-    gen (Service ident parent funcs) = [classDecl ident parent funcs]
-    gen (Enum ident maps) = [enumDecl ident maps]
-    gen (Exception ident fields) = [recDecl ident fields]
+    gen (Struct ident fields) = [ recDecl ident fields ["Generic", "Show"]
+                                , instDecl "Binary" ident
+                                ]
+    gen (Enum ident maps) = [ enumDecl ident ["Generic", "Show"] maps
+                            , instDecl "Binary" ident
+                            ]
+    gen (Exception ident fields) = [ recDecl ident fields ["Generic", "Show"]
+                                   , instDecl "Binary" ident
+                                   ]
+    gen (Service _ _ funcs) = concatMap funcDecl funcs
+    gen _ = []
 
-    gen x = [typeDecl "unknown:" (Left . show $ x)]
+funcDecl :: Function -> [S.Decl]
+funcDecl Function{..} = decls
+  where
+    ident             = capitalize _fnName
+    fieldTypes        = map (\Field{..} -> _fieldType) _fnFields
+    decls             = [ dataDecl ident fieldTypes  ["Generic", "Show"]
+                        , instDecl "Binary" ident
+                        , instDecl "Request" ident
+                        ]
+
+qName :: Identifier -> S.QName
+qName = S.UnQual . S.Ident
+
+instDecl :: Identifier -> Identifier -> S.Decl
+instDecl c i = S.InstDecl noLoc [] (qName c) [toType i] []
+
+capitalize :: String -> String
+capitalize [] = []
+capitalize (a:bs) = toUpper a:bs
 
 generate :: Document -> String
-generate (Document _ defs) = prettyPrint mod
-  where mod  = S.Module noLoc
-                        (S.ModuleName "Types")
-                        []
-                        Nothing
-                        Nothing
-                        []
-                        ((concatMap gen) . (filter predicate) $ defs)
-        --predicate (Typedef _ _)   = True
-        --predicate (Struct _ _)    = True
-        --predicate (Const _ _ _)   = True
-        --predicate (Service _ _ _) = True
-        --predicate (Enum _ _)      = False
-        --predicate (Exception _ _) = True
-        predicate _ = True
+generate (Document _ defs) =
+    prettyPrint $ S.Module
+                  noLoc
+                  (S.ModuleName "Types")
+                  []
+                  Nothing
+                  Nothing
+                  []
+                  (concatMap gen defs)
