@@ -16,52 +16,36 @@ import Types
 typeDecl :: Identifier -> DefinitionType -> S.Decl
 typeDecl ident d = S.TypeDecl noLoc (S.Ident ident) [] (toType d)
 
-dataDeclHelper :: Identifier -> [Identifier] -> [S.QualConDecl] -> S.Decl
-dataDeclHelper ident deriv qcds = S.DataDecl noLoc
-                                       S.DataType
-                                       context
-                                       (S.Ident ident)
-                                       tyVarBind
-                                       qcds
-                                       (map mkDeriv deriv)
+dataOrRec :: Identifier -> [Identifier] -> [S.ConDecl] -> S.Decl
+dataOrRec ident derivs cds = S.DataDecl noLoc
+                                        S.DataType
+                                        context
+                                        (S.Ident ident)
+                                        tyVarBind
+                                        (map qualConDecl cds)
+                                        (map mkDeriving derivs)
   where
-    context   = []
     tyVarBind = []
-    mkDeriv d = (S.UnQual . S.Ident $ d, [])
+    context   = []
+    qualConDecl  = S.QualConDecl noLoc tyVarBind' context'
+      where tyVarBind'    = []
+            context'      = []
+    mkDeriving d = (S.UnQual . S.Ident $ d, types)
+      where types         = []
 
-enumDecl :: Identifier -> [Identifier] -> [(Identifier, Maybe Integer)] -> S.Decl
-enumDecl ident deriv = dataDeclHelper ident ("Enum":deriv) . map (qualConDecl . fst)
+recDecl :: Identifier -> [Identifier] -> [Field] -> S.Decl
+recDecl ident derivs fields = dataOrRec ident derivs [conDecl]
   where
-    qualConDecl = (S.QualConDecl noLoc tyVarBind context) . conDecl
-      where tyVarBind = []
-            context   = []
-            conDecl   = (`S.ConDecl` []) . S.Ident
+    conDecl           = S.RecDecl (S.Ident ident) (map mkField fields)
+    mkField Field{..} = ( [S.Ident ('_':_fieldName)]
+                        , S.UnBangedTy (toType _fieldType)
+                        )
 
-recDecl :: Identifier -> [Field] -> [Identifier] -> S.Decl
-recDecl ident fields deriv = dataDeclHelper ident deriv [qualConDecl]
+dataDecl :: Identifier -> [Identifier] -> [FieldType] -> S.Decl
+dataDecl ident derivs ftypes = dataOrRec ident derivs [conDecl]
   where
-    qualConDecl = S.QualConDecl noLoc
-                                tyVarBind'
-                                context'
-                                conDecl
-      where
-        tyVarBind'        = []
-        context'          = []
-        conDecl           = S.RecDecl (S.Ident ident) (map mkField fields)
-        mkField Field{..} = ( [S.Ident ("_" ++ _fieldName)]
-                            , S.UnBangedTy (toType _fieldType)
-                            )
-
-dataDecl :: Identifier -> [FieldType] -> [Identifier] -> S.Decl
-dataDecl ident ftypes deriv = dataDeclHelper ident deriv [qualConDecl]
-  where qualConDecl = S.QualConDecl noLoc
-                                    tyVarBind
-                                    context
-                                    conDecl
-        tyVarBind   = []
-        context     = []
-        conDecl     = S.ConDecl (S.Ident ident) types
-        types       = map (S.UnBangedTy . toType) ftypes
+    conDecl = S.ConDecl (S.Ident ident) types
+    types   = map (S.UnBangedTy . toType) ftypes
 
 mapType :: String -> FieldType -> FieldType -> S.Type
 mapType m k v = S.TyApp (S.TyApp (toType m) (toType k)) (toType v)
@@ -148,15 +132,18 @@ class Generator a where
 instance Generator Definition where
     gen (Typedef t ident) = [typeDecl ident t]
     gen (Const t ident val) = [typeSig ident (toType t), patBind ident val]
-    gen (Struct ident fields) = [ recDecl ident fields ["Generic", "Show"]
-                                , instDecl "Binary" ident
-                                ]
-    gen (Enum ident maps) = [ enumDecl ident ["Generic", "Show"] maps
-                            , instDecl "Binary" ident
-                            ]
-    gen (Exception ident fields) = [ recDecl ident fields ["Generic", "Show"]
-                                   , instDecl "Binary" ident
-                                   ]
+    gen (Struct ident fields) =
+        [ recDecl ident ["Generic", "Show"] fields
+        , instDecl "Binary" ident
+        ]
+    gen (Enum ident maps) =
+        [ dataDecl ident ["Enum", "Generic", "Show"] $ map (Identifier . fst) maps
+        , instDecl "Binary" ident
+        ]
+    gen (Exception ident fields) =
+        [ recDecl ident ["Generic", "Show"] fields
+        , instDecl "Binary" ident
+        ]
     gen (Service _ _ funcs) = concatMap funcDecl funcs
     gen _ = []
 
@@ -164,8 +151,8 @@ funcDecl :: Function -> [S.Decl]
 funcDecl Function{..} = decls
   where
     ident             = capitalize _fnName
-    fieldTypes        = map (\Field{..} -> _fieldType) _fnFields
-    decls             = [ dataDecl ident fieldTypes  ["Generic", "Show"]
+    types             = map (\Field{..} -> _fieldType)
+    decls             = [ dataDecl ident ["Generic", "Show"] (types _fnFields)
                         , instDecl "Binary" ident
                         , instDecl "Request" ident
                         ]
