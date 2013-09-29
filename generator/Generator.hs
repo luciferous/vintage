@@ -171,7 +171,7 @@ generate :: Document -> S.Module
 generate (Document heads defs) =
     S.Module noLoc
              (S.ModuleName ns)
-             []
+             [S.LanguagePragma noLoc [S.Ident "DeriveGeneric"]]
              Nothing
              Nothing
              []
