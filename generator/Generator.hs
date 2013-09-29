@@ -6,8 +6,8 @@ module Generator where
 import Prelude hiding (const, mod)
 
 import Data.Char (isLower, toUpper)
+import Data.List (find, intercalate)
 import Data.Maybe (maybeToList)
-import Language.Haskell.Exts.Pretty (prettyPrint)
 import Language.Haskell.Exts.SrcLoc (noLoc)
 import qualified Language.Haskell.Exts.Syntax as S
 
@@ -167,13 +167,17 @@ capitalize :: String -> String
 capitalize [] = []
 capitalize (a:bs) = toUpper a:bs
 
-generate :: Document -> String
-generate (Document _ defs) =
-    prettyPrint $ S.Module
-                  noLoc
-                  (S.ModuleName "Types")
-                  []
-                  Nothing
-                  Nothing
-                  []
-                  (concatMap gen defs)
+generate :: Document -> S.Module
+generate (Document heads defs) =
+    S.Module noLoc
+             (S.ModuleName ns)
+             []
+             Nothing
+             Nothing
+             []
+             (concatMap gen defs)
+  where
+    ns      = intercalate "." (maybeToList nsDef ++ ["Types"])
+    nsDef   = fmap (\(Namespace _ n) -> n) (find isNs heads)
+      where isNs (Namespace "hs" _) = True
+            isNs _ = False
