@@ -7,7 +7,7 @@ import Prelude hiding (const, mod)
 
 import Data.Char (isLower, toUpper)
 import Data.List (find, intercalate)
-import Data.Maybe (maybeToList)
+import Data.Maybe (isJust, maybeToList)
 import Language.Haskell.Exts.SrcLoc (noLoc)
 import qualified Language.Haskell.Exts.Syntax as S
 
@@ -167,6 +167,22 @@ capitalize :: String -> String
 capitalize [] = []
 capitalize (a:bs) = toUpper a:bs
 
+importDecl :: String -> Maybe String -> (Bool,[S.ImportSpec]) -> S.ImportDecl
+importDecl name alias spec =
+    S.ImportDecl noLoc
+                 (S.ModuleName name)
+                 (isJust alias)
+                 False
+                 Nothing
+                 (fmap S.ModuleName alias)
+                 (mkSpec spec)
+  where
+    mkSpec (_,[]) = Nothing
+    mkSpec s      = Just s
+
+specifying :: [String] -> (Bool, [S.ImportSpec])
+specifying s = (False, map (S.IAbs . S.Ident) s)
+
 generate :: Document -> S.Module
 generate (Document heads defs) =
     S.Module noLoc
@@ -174,7 +190,10 @@ generate (Document heads defs) =
              [S.LanguagePragma noLoc [S.Ident "DeriveGeneric"]]
              Nothing
              Nothing
-             []
+             [ importDecl "Data.Binary" Nothing (specifying ["Binary"])
+             , importDecl "Vintage" Nothing (specifying ["Request"])
+             , importDecl "GHC.Generics" Nothing (specifying ["Generic"])
+             ]
              (concatMap gen defs)
   where
     ns      = intercalate "." (maybeToList nsDef ++ ["GenTypes"])
