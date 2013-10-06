@@ -9,7 +9,8 @@ import Vintage
 app :: Session ()
 app = do
     msg <- send Ping
-    liftIO $ putStrLn (show (msg :: Pong))
+    liftIO $ putStrLn (show (msg :: Ping))
+    return ()
 
 server :: Ping -> IO Pong
 server Ping = return Pong
