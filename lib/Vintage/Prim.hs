@@ -1,20 +1,32 @@
 module Vintage.Prim where
 
+import Thrift.Protocol.Binary
+import Thrift.Transport.Framed
+import Thrift.Transport.Handle
+import Vintage.Protocol.Binary
+import Vintage.Types
+
 import Control.Exception (catch, IOException)
 import Control.Concurrent (forkFinally)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Reader (ask, runReaderT)
+import Control.Monad.Reader (ask, runReaderT, ReaderT)
 import Data.Binary (decode, encode, Binary)
 import qualified Data.ByteString.Lazy as B
 import Network (accept, connectTo, listenOn, PortID(PortNumber))
 import System.IO (Handle)
 
-import Vintage.Types
+type FramedBinaryPair = ( BinaryProtocol (FramedTransport Handle)
+                        , BinaryProtocol (FramedTransport Handle)
+                        )
+
+type Session a = ReaderT FramedBinaryPair IO a
 
 runClient :: String -> Int -> Session a -> IO a
 runClient host port session = do
-    conn <- connectTo host (PortNumber $ fromIntegral port)
-    runReaderT session conn
+    transport <- hOpen (host, PortNumber $ fromIntegral port)
+    framed <- openFramedTransport transport
+    let proto = BinaryProtocol framed
+    runReaderT session (proto, proto)
 
 runServer :: (Binary a, Binary b) => Int -> (a -> IO b) -> IO ()
 runServer port app = do
@@ -40,13 +52,13 @@ respond handle payload = do
     B.hPut handle (encode (B.length message))
     B.hPut handle message 
 
-send :: (Binary a, Binary b) => a -> Session b
+send :: (HasName a, HasName b, Binary a, Binary b) => a -> Session b
 send req = do
-    conn <- ask
+    (i, o) <- ask
     liftIO $ do
-        let message = encode req
-        B.hPut conn (encode (B.length message))
-        B.hPut conn message
-        len <- B.hGet conn 8
-        payload <- B.hGet conn (decode len)
-        return (decode payload)
+        tWrite (getTransport o) (encode (Message req))
+        tFlush (getTransport o)
+        -- Fixme
+        --bs <- tReadAll (getTransport i) 1024
+        --return (decode bs)
+        return (decode (encode req))

@@ -9,3 +9,4 @@ module Vintage(
 
 import Vintage.Prim
 import Vintage.Types
+import Thrift

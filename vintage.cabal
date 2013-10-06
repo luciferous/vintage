@@ -46,14 +46,20 @@ library
   exposed-modules:     Vintage
                      , Vintage.Prim
                      , Vintage.Types
+                     , Vintage.Protocol
+                     , Vintage.Protocol.Binary
 
   -- other-modules:       
-  -- other-extensions:    
+  other-extensions:    TypeSynonymInstances
+                     , OverloadedStrings
+                     , RecordWildCards
   build-depends:       base >=4.6 && <4.7
                        , binary >=0.7.1.0
                        , mtl >=2.1.2
                        , network >=2.4.1.2
                        , bytestring >=0.10.0.2
+                       , text >=0.11.3.1
                        , transformers >=0.3.0.0
+                       , thrift >=1.0.0
   hs-source-dirs:      lib
   default-language:    Haskell2010
