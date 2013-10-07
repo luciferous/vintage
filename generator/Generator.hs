@@ -100,11 +100,11 @@ toExp (ConstList cs)          = S.List . map toExp $ cs
 toExp (ConstMap ps)           = S.List . map tuplize $ ps
   where tuplize (a, b) = S.Tuple S.Boxed (map toExp [a,b])
 
-patBind :: Identifier -> ConstValue -> S.Decl
-patBind ident val = S.PatBind noLoc
+patBind :: Identifier -> S.Exp -> S.Decl
+patBind ident exp = S.PatBind noLoc
                                 (S.PVar . S.Ident $ ident)
                                 Nothing
-                                (S.UnGuardedRhs . toExp $ val)
+                                (S.UnGuardedRhs exp)
                                 (S.BDecls bindingGroup)
   where bindingGroup = []
 
@@ -131,37 +131,62 @@ class Generator a where
 
 instance Generator Definition where
     gen (Typedef t ident) = [typeDecl ident t]
-    gen (Const t ident val) = [typeSig ident (toType t), patBind ident val]
+    gen (Const t ident val) = [typeSig ident (toType t), patBind ident (toExp val)]
     gen (Struct ident fields) =
-        [ recDecl ident ["Generic", "Show"] fields
-        , instDecl "Binary" ident
+        [ recDecl ident ["Show"] fields
+        , instDecl "Binary" ident []
         ]
     gen (Enum ident maps) =
-        [ dataDecl ident ["Enum", "Generic", "Show"] $ map (Identifier . fst) maps
-        , instDecl "Binary" ident
+        [ dataDecl ident ["Enum", "Show"] $ map (Identifier . fst) maps
+        , instDecl "Binary" ident []
         ]
     gen (Exception ident fields) =
-        [ recDecl ident ["Generic", "Show"] fields
-        , instDecl "Binary" ident
+        [ recDecl ident ["Show"] fields
+        , instDecl "Binary" ident []
         ]
     gen (Service _ _ funcs) = concatMap funcDecl funcs
     gen _ = []
 
 funcDecl :: Function -> [S.Decl]
-funcDecl Function{..} = decls
+funcDecl Function{..} =
+    [ dataDecl ident ["Show"] (types _fnFields)
+    , instDecl "Binary" ident [ S.InsDecl $ patBind "get" get
+                              , S.InsDecl $ funBind "put" [putLhs] put
+                              ]
+    , instDecl "HasName" ident [S.InsDecl $ funBind "nameOf" [S.PWildCard] nameOf]
+    ]
   where
-    ident             = capitalize _fnName
-    types             = map (\Field{..} -> _fieldType)
-    decls             = [ dataDecl ident ["Generic", "Show"] (types _fnFields)
-                        , instDecl "Binary" ident
-                        , instDecl "Request" ident
+    con = S.Con    . S.UnQual . S.Ident
+    op  = S.QVarOp . S.UnQual . S.Symbol
+    var = S.Var    . S.UnQual . S.Ident
+    get = S.InfixApp (S.InfixApp (con "Echo") (op ".") (var "third"))
+                     (op "<$>") (var "getField")
+    put = S.InfixApp (S.App (S.Var (qName "struct"))
+                            (S.Paren (S.App (S.Var . qName $ "nameOf") (S.Var . qName $ "x"))))
+         (op "$")
+         (S.App (S.Var . qName $ "putField")
+                 (S.Tuple S.Boxed [ S.Lit (S.Int 1)
+                                  , S.Lit (S.String "message")
+                                  , S.Var (qName "message")
+                                  ]))
+    putLhs = S.PAsPat (S.Ident "x") (S.PRec (qName _fnName) [S.PFieldWildcard])
+    ident = capitalize _fnName
+    types = map (\Field{..} -> _fieldType)
+    nameOf = S.Lit . S.String $ _fnName
+
+funBind ident lhs exp = S.FunBind [ S.Match noLoc
+                                            (S.Ident ident)
+                                            lhs
+                                            Nothing
+                                            (S.UnGuardedRhs exp)
+                                            (S.BDecls [])
                         ]
 
 qName :: Identifier -> S.QName
 qName = S.UnQual . S.Ident
 
-instDecl :: Identifier -> Identifier -> S.Decl
-instDecl c i = S.InstDecl noLoc [] (qName c) [toType i] []
+instDecl :: Identifier -> Identifier -> [S.InstDecl] -> S.Decl
+instDecl c i ds = S.InstDecl noLoc [] (qName c) [toType i] ds
 
 capitalize :: String -> String
 capitalize [] = []
@@ -187,12 +212,15 @@ generate :: Document -> S.Module
 generate (Document heads defs) =
     S.Module noLoc
              (S.ModuleName ns)
-             [S.LanguagePragma noLoc [S.Ident "DeriveGeneric"]]
+             [ S.LanguagePragma noLoc [S.Ident "OverloadedStrings"]
+             , S.LanguagePragma noLoc [S.Ident "RecordWildCards"]
+             , S.LanguagePragma noLoc [S.Ident "TypeSynonymInstances"]
+             ]
              Nothing
              Nothing
              [ importDecl "Data.Binary" Nothing (specifying ["Binary"])
-             , importDecl "Vintage" Nothing (specifying ["Request"])
-             , importDecl "GHC.Generics" Nothing (specifying ["Generic"])
+             , importDecl "Thrift" Nothing (specifying [])
+             , importDecl "Vintage.Protocol.Binary" Nothing (specifying [])
              ]
              (concatMap gen defs)
   where
