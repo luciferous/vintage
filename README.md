@@ -1,4 +1,4 @@
 vintage
 =======
 
-Thrift extensions for Cloud Haskell
+An alternative Thrift story for Haskell.
